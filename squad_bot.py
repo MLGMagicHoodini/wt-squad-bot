@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from config import DISCORD_TOKEN
 import asyncio
 import re
@@ -70,9 +70,10 @@ class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
         """Create the unlimited custom channel"""
         channel_name = self.channel_name.value.strip()
         
-        guild = self.voice_state.channel.guild
+        guild = interaction.guild
         member = guild.get_member(self.user_id)
         
+        # Check if user is still in voice
         if not member or not member.voice or not member.voice.channel:
             await interaction.response.send_message(
                 "❌ Você não está mais em um canal de voz!",
@@ -87,29 +88,55 @@ class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
         
         # Create the voice channel
         category = guild.get_channel(UNLIMITED_CATEGORY_ID)
-        new_channel = await guild.create_voice_channel(
-            name=channel_name,
-            category=category,
-            user_limit=0,  # Unlimited
-            reason=f"Canal personalizado criado por {member.name}"
-        )
         
-        # Store as temp channel
-        temp_channels[new_channel.id] = {
-            'creator_id': self.user_id,
-            'created_at': asyncio.get_event_loop().time(),
-            'size': 0,
-            'type': 'unlimited'
-        }
-        
-        # Move user to new channel
-        await member.move_to(new_channel)
-        
-        # Respond
-        await interaction.response.send_message(
-            f"✅ Canal **{channel_name}** criado! Você foi movido para o canal.",
-            ephemeral=True
-        )
+        try:
+            new_channel = await guild.create_voice_channel(
+                name=channel_name,
+                category=category,
+                user_limit=0,  # Unlimited
+                reason=f"Canal personalizado criado por {member.name}"
+            )
+            
+            # Try to move user to new channel
+            try:
+                await member.move_to(new_channel)
+                
+                # Only add to temp_channels if user was successfully moved
+                temp_channels[new_channel.id] = {
+                    'creator_id': self.user_id,
+                    'created_at': asyncio.get_event_loop().time(),
+                    'size': 0,
+                    'type': 'unlimited'
+                }
+                
+                await interaction.response.send_message(
+                    f"✅ Canal **{channel_name}** criado! Você foi movido para o canal.",
+                    ephemeral=True
+                )
+                
+                print(f"✨ Created unlimited channel '{channel_name}' for {member.name}")
+                
+            except discord.Forbidden:
+                # Couldn't move user, delete the channel
+                await new_channel.delete(reason="Não foi possível mover o usuário")
+                await interaction.response.send_message(
+                    "❌ Não foi possível mover você para o canal. Permissões insuficientes.",
+                    ephemeral=True
+                )
+            except discord.HTTPException:
+                # User might have disconnected, delete the channel
+                await new_channel.delete(reason="Usuário desconectou")
+                await interaction.response.send_message(
+                    "❌ Você desconectou antes de ser movido. Tente novamente.",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            print(f"❌ Error creating channel: {e}")
+            await interaction.response.send_message(
+                "❌ Erro ao criar o canal. Tente novamente.",
+                ephemeral=True
+            )
         
         # Clean up pending setup
         if self.user_id in pending_setups:
@@ -118,8 +145,6 @@ class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
             except:
                 pass
             del pending_setups[self.user_id]
-        
-        print(f"✨ Created unlimited channel '{channel_name}' for {member.name}")
 
 
 class SquadView(discord.ui.View):
@@ -141,9 +166,10 @@ class SquadView(discord.ui.View):
     
     async def create_squad_channel(self, interaction: discord.Interaction, size: int, size_name: str):
         """Create the squad channel and move the user"""
-        guild = self.voice_state.channel.guild
+        guild = interaction.guild
         member = guild.get_member(self.user_id)
         
+        # Check if user is still in voice
         if not member or not member.voice or not member.voice.channel:
             await interaction.response.send_message(
                 "❌ Você não está mais em um canal de voz!",
@@ -157,29 +183,55 @@ class SquadView(discord.ui.View):
         
         # Create the voice channel
         category = guild.get_channel(SQUAD_CATEGORY_ID) if SQUAD_CATEGORY_ID else None
-        new_channel = await guild.create_voice_channel(
-            name=channel_name,
-            category=category,
-            user_limit=size,
-            reason=f"Squad channel created by {member.name}"
-        )
         
-        # Store as temp channel
-        temp_channels[new_channel.id] = {
-            'creator_id': self.user_id,
-            'created_at': asyncio.get_event_loop().time(),
-            'size': size,
-            'type': 'squad'
-        }
-        
-        # Move user to new channel
-        await member.move_to(new_channel)
-        
-        # Respond and clean up
-        await interaction.response.send_message(
-            f"✅ Criado seu {channel_name}! Você foi movido para o canal.",
-            ephemeral=True
-        )
+        try:
+            new_channel = await guild.create_voice_channel(
+                name=channel_name,
+                category=category,
+                user_limit=size,
+                reason=f"Squad channel created by {member.name}"
+            )
+            
+            # Try to move user to new channel
+            try:
+                await member.move_to(new_channel)
+                
+                # Only add to temp_channels if user was successfully moved
+                temp_channels[new_channel.id] = {
+                    'creator_id': self.user_id,
+                    'created_at': asyncio.get_event_loop().time(),
+                    'size': size,
+                    'type': 'squad'
+                }
+                
+                await interaction.response.send_message(
+                    f"✅ Criado seu {channel_name}! Você foi movido para o canal.",
+                    ephemeral=True
+                )
+                
+                print(f"✨ Created {channel_name} for {member.name} (Limit: {size})")
+                
+            except discord.Forbidden:
+                # Couldn't move user, delete the channel
+                await new_channel.delete(reason="Não foi possível mover o usuário")
+                await interaction.response.send_message(
+                    "❌ Não foi possível mover você para o canal. Permissões insuficientes.",
+                    ephemeral=True
+                )
+            except discord.HTTPException:
+                # User might have disconnected, delete the channel
+                await new_channel.delete(reason="Usuário desconectou")
+                await interaction.response.send_message(
+                    "❌ Você desconectou antes de ser movido. Tente novamente.",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            print(f"❌ Error creating channel: {e}")
+            await interaction.response.send_message(
+                "❌ Erro ao criar o canal. Tente novamente.",
+                ephemeral=True
+            )
         
         # Delete the button message
         try:
@@ -190,8 +242,6 @@ class SquadView(discord.ui.View):
         # Clean up pending setup
         if self.user_id in pending_setups:
             del pending_setups[self.user_id]
-        
-        print(f"✨ Created {channel_name} for {member.name} (Limit: {size})")
     
     @discord.ui.button(label="Solo (1)", style=discord.ButtonStyle.primary, emoji="1️⃣")
     async def solo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -245,16 +295,38 @@ class UnlimitedChannelView(discord.ui.View):
             await interaction.response.send_message("❌ Este não é o seu setup de canal!", ephemeral=True)
             return
         
-        # Show modal for channel name
+        # Show modal for channel name (this opens a popup, doesn't create instantly)
         modal = CustomChannelModal(self.user_id, self.voice_state)
         await interaction.response.send_modal(modal)
 
 
 @bot.event
 async def on_ready():
+    cleanup_empty_channels.start()  # Start the cleanup task
     print(f"✅ Bot is online as {bot.user}")
     print(f"📋 Monitoring squad channel: {CREATE_SQUAD_CHANNEL_ID}")
     print(f"📋 Monitoring unlimited channel: {CREATE_UNLIMITED_CHANNEL_ID}")
+
+
+@tasks.loop(minutes=5)
+async def cleanup_empty_channels():
+    """Periodic cleanup of empty temp channels (backup safety net)"""
+    if not DELETE_EMPTY_CHANNELS:
+        return
+    
+    for channel_id in list(temp_channels.keys()):
+        channel = bot.get_channel(channel_id)
+        if channel:
+            if len(channel.members) == 0:
+                try:
+                    await channel.delete(reason="Canal vazio - limpeza periódica")
+                    del temp_channels[channel_id]
+                    print(f"🧹 Cleaned up empty channel: {channel.name}")
+                except Exception as e:
+                    print(f"Error cleaning channel {channel_id}: {e}")
+        else:
+            # Channel doesn't exist anymore, remove from tracking
+            del temp_channels[channel_id]
 
 
 @bot.event
@@ -299,7 +371,7 @@ async def on_voice_state_update(member, before, after):
         try:
             message = await after.channel.send(
                 f"🎤 {member.mention} **Criar Canal de Voz**\n"
-                f"Clique no botão para criar seu canal personalizado:",
+                f"Clique no botão abaixo para escolher o nome do canal:",
                 view=view,
                 delete_after=35  # Auto-delete after 35 seconds
             )
