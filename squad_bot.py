@@ -4,8 +4,8 @@ from config import DISCORD_TOKEN
 import asyncio
 
 # Configuration
-CREATE_VOICE_CHANNEL_NAME = "Create Squad Channel"  # The voice channel users join
-CATEGORY_ID = None  # Optional: Category ID to create channels in (or None)
+CREATE_VOICE_CHANNEL_NAME = "Criar Squad"  # The voice channel users join
+CATEGORY_ID = 1456072402915164294  # Optional: Category ID to create channels in (or None)
 CHANNEL_PREFIX = "WT Squad"
 DELETE_EMPTY_CHANNELS = True
 
