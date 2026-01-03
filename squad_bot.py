@@ -2,13 +2,13 @@ import discord
 from discord.ext import commands
 from config import DISCORD_TOKEN
 import asyncio
+import re
 
 # Configuration
-CREATE_SQUAD_CHANNEL_NAME = "Criar Squad"  # Limited squad channels (1-4)
+CREATE_SQUAD_CHANNEL_ID = 1457130530872234156  # Squad channel creator (1-4 players)
 CREATE_UNLIMITED_CHANNEL_ID = 1456683516283850857  # "Criar Canal de Voz" - Unlimited channels
 UNLIMITED_CATEGORY_ID = 1456683672219680962  # Category for unlimited channels
 SQUAD_CATEGORY_ID = 1456072402915164294  # Optional: Category for squad channels (or None)
-CHANNEL_PREFIX = "WT Squad"
 DELETE_EMPTY_CHANNELS = True
 
 # Bot setup
@@ -23,12 +23,42 @@ temp_channels = {}
 pending_setups = {}
 
 
+def get_next_channel_number(guild, category_id, channel_prefix):
+    """Find the next available number for a channel name pattern"""
+    # Get the category or all channels if no category
+    if category_id:
+        category = guild.get_channel(category_id)
+        channels = category.voice_channels if category else []
+    else:
+        channels = guild.voice_channels
+    
+    existing_numbers = []
+    # Match pattern like "Solo 1", "Duo 2", "Geral 3", etc.
+    pattern = re.compile(rf'{re.escape(channel_prefix)}\s*(\d+)')
+    
+    for channel in channels:
+        match = pattern.match(channel.name)
+        if match:
+            existing_numbers.append(int(match.group(1)))
+    
+    if not existing_numbers:
+        return 1
+    
+    # Find the lowest available number
+    existing_numbers.sort()
+    for i in range(1, max(existing_numbers) + 2):
+        if i not in existing_numbers:
+            return i
+    
+    return max(existing_numbers) + 1
+
+
 class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
     channel_name = discord.ui.TextInput(
         label="Nome do Canal",
-        placeholder="Digite o nome do seu canal...",
+        placeholder="Deixe em branco para 'Geral X'",
         max_length=100,
-        required=True
+        required=False
     )
     
     def __init__(self, user_id, voice_state):
@@ -40,13 +70,6 @@ class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
         """Create the unlimited custom channel"""
         channel_name = self.channel_name.value.strip()
         
-        if not channel_name:
-            await interaction.response.send_message(
-                "❌ O nome do canal não pode estar vazio!",
-                ephemeral=True
-            )
-            return
-        
         guild = self.voice_state.channel.guild
         member = guild.get_member(self.user_id)
         
@@ -56,6 +79,11 @@ class CustomChannelModal(discord.ui.Modal, title="Nome do Canal de Voz"):
                 ephemeral=True
             )
             return
+        
+        # If no name provided, use "Geral X"
+        if not channel_name:
+            next_number = get_next_channel_number(guild, UNLIMITED_CATEGORY_ID, "Geral")
+            channel_name = f"Geral {next_number}"
         
         # Create the voice channel
         category = guild.get_channel(UNLIMITED_CATEGORY_ID)
@@ -111,12 +139,8 @@ class SquadView(discord.ui.View):
         if self.user_id in pending_setups:
             del pending_setups[self.user_id]
     
-    async def create_squad_channel(self, interaction: discord.Interaction, size: int):
+    async def create_squad_channel(self, interaction: discord.Interaction, size: int, size_name: str):
         """Create the squad channel and move the user"""
-        # Determine channel name
-        name_suffix = {1: "(Solo)", 2: "(Duo)", 3: "(Trio)", 4: ""}
-        channel_name = f"{CHANNEL_PREFIX} {name_suffix.get(size, '')}".strip()
-        
         guild = self.voice_state.channel.guild
         member = guild.get_member(self.user_id)
         
@@ -126,6 +150,10 @@ class SquadView(discord.ui.View):
                 ephemeral=True
             )
             return
+        
+        # Get next number for this squad size
+        next_number = get_next_channel_number(guild, SQUAD_CATEGORY_ID, size_name)
+        channel_name = f"{size_name} {next_number}"
         
         # Create the voice channel
         category = guild.get_channel(SQUAD_CATEGORY_ID) if SQUAD_CATEGORY_ID else None
@@ -170,28 +198,28 @@ class SquadView(discord.ui.View):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Este não é o seu setup de squad!", ephemeral=True)
             return
-        await self.create_squad_channel(interaction, 1)
+        await self.create_squad_channel(interaction, 1, "Solo")
     
     @discord.ui.button(label="Duo (2)", style=discord.ButtonStyle.primary, emoji="2️⃣")
     async def duo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Este não é o seu setup de squad!", ephemeral=True)
             return
-        await self.create_squad_channel(interaction, 2)
+        await self.create_squad_channel(interaction, 2, "Duo")
     
     @discord.ui.button(label="Trio (3)", style=discord.ButtonStyle.primary, emoji="3️⃣")
     async def trio_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Este não é o seu setup de squad!", ephemeral=True)
             return
-        await self.create_squad_channel(interaction, 3)
+        await self.create_squad_channel(interaction, 3, "Trio")
     
     @discord.ui.button(label="Squad (4)", style=discord.ButtonStyle.success, emoji="4️⃣")
     async def squad_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Este não é o seu setup de squad!", ephemeral=True)
             return
-        await self.create_squad_channel(interaction, 4)
+        await self.create_squad_channel(interaction, 4, "Squad")
 
 
 class UnlimitedChannelView(discord.ui.View):
@@ -225,7 +253,8 @@ class UnlimitedChannelView(discord.ui.View):
 @bot.event
 async def on_ready():
     print(f"✅ Bot is online as {bot.user}")
-    print(f"📋 Monitoring for users joining voice channels")
+    print(f"📋 Monitoring squad channel: {CREATE_SQUAD_CHANNEL_ID}")
+    print(f"📋 Monitoring unlimited channel: {CREATE_UNLIMITED_CHANNEL_ID}")
 
 
 @bot.event
@@ -233,7 +262,7 @@ async def on_voice_state_update(member, before, after):
     """Handle voice state changes"""
     
     # Check if user joined the squad create channel
-    if after.channel and after.channel.name == CREATE_SQUAD_CHANNEL_NAME:
+    if after.channel and after.channel.id == CREATE_SQUAD_CHANNEL_ID:
         # Don't create multiple pending setups for the same user
         if member.id in pending_setups:
             return
